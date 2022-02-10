@@ -33,23 +33,108 @@ GROUP BY position;
 
 
 -- 3. Find the average number of strikeouts per game by decade since 1920. Round the numbers you report to 2 decimal places. Do the same for home runs per game. Do you see any trends? (Hint: For this question, you might find it helpful to look at the **generate_series** function (https://www.postgresql.org/docs/9.1/functions-srf.html). If you want to see an example of this in action, check out this DataCamp video: https://campus.datacamp.com/courses/exploratory-data-analysis-in-sql/summarizing-and-aggregating-numeric-data?ex=6)
-
+WITH bins AS (
+	SELECT 
+		generate_series(1920, 2010, 10) AS lower,
+		generate_series(1929, 2019, 10) AS upper )
+SELECT 
+	lower, 
+	upper, 
+	ROUND(SUM(so) * 2.0 / SUM(g), 2) AS strikeouts_per_game,
+	ROUND(SUM(hr) * 2.0 / SUM(g), 2) AS homeruns_per_game
+FROM bins
+LEFT JOIN teams
+	ON yearid >= lower
+	AND yearid < upper
+GROUP BY lower, upper
+ORDER BY lower DESC;
 
 
 -- 4. Find the player who had the most success stealing bases in 2016, where __success__ is measured as the percentage of stolen base attempts which are successful. (A stolen base attempt results either in a stolen base or being caught stealing.) Consider only players who attempted _at least_ 20 stolen bases. Report the players' names, number of stolen bases, number of attempts, and stolen base percentage.
-
+SELECT 
+	namefirst || ' ' || namelast AS full_name,
+	sb AS stolen_bases,
+	sb + cs AS stealing_attempts,
+	ROUND(sb::numeric / (sb + cs), 2) AS stealing_success_pct
+FROM batting
+INNER JOIN people
+USING(playerid)
+WHERE yearid = 2016 
+	AND (sb + cs) >= 20
+ORDER BY stealing_success_pct DESC;
 
 
 -- 5. From 1970 to 2016, what is the largest number of wins for a team that did not win the world series? What is the smallest number of wins for a team that did win the world series? Doing this will probably result in an unusually small number of wins for a world series champion; determine why this is the case. Then redo your query, excluding the problem year. How often from 1970 to 2016 was it the case that a team with the most wins also won the world series? What percentage of the time?
+SELECT * 
+FROM teams
+WHERE yearid BETWEEN 1970 AND 2016
+	AND wswin = 'N'
+ORDER BY w DESC;
 
+
+SELECT * 
+FROM teams
+WHERE yearid BETWEEN 1970 AND 2016
+	AND wswin = 'Y'
+ORDER BY w;
+
+
+SELECT * 
+FROM teams
+WHERE yearid BETWEEN 1970 AND 2016
+	AND yearid != 1981
+	AND wswin = 'Y'
+ORDER BY w;
+
+
+SELECT 
+	SUM(CASE WHEN wswin = 'Y' THEN 1 END) AS ws_wins,
+	ROUND(SUM(CASE WHEN wswin = 'Y' THEN 1 END)::numeric / COUNT(*), 3) AS ws_win_pct
+FROM teams
+INNER JOIN (
+	SELECT yearid, MAX(w) AS w
+	FROM teams
+	WHERE yearid BETWEEN 1970 AND 2016
+	AND wswin IS NOT NULL
+	GROUP BY yearid ) AS most_wins_by_year
+USING(yearid, w);
 
 
 -- 6. Which managers have won the TSN Manager of the Year award in both the National League (NL) and the American League (AL)? Give their full name and the teams that they were managing when they won the award.
-
+SELECT
+	namefirst || ' ' || namelast AS full_name,
+	yearid,
+	teamid,
+	lgid
+FROM awardsmanagers
+INNER JOIN (
+	SELECT 
+		playerid
+	FROM awardsmanagers
+	WHERE awardid = 'TSN Manager of the Year'
+	GROUP BY playerid
+	HAVING COUNT(DISTINCT lgid) = 2 ) AS both_leagues
+USING(playerid)
+INNER JOIN people
+USING(playerid)
+INNER JOIN managers
+USING(playerid, yearid, lgid)
 
 
 -- 7. Which pitcher was the least efficient in 2016 in terms of salary / strikeouts? Only consider pitchers who started at least 10 games (across all teams). Note that pitchers often play for more than one team in a season, so be sure that you are counting all stats for each player.
-
+SELECT 
+	namefirst || ' ' || namelast AS full_name,
+	yearid,
+	SUM(salary)::numeric::money / SUM(so) AS dollars_per_strikeout
+FROM pitching
+INNER JOIN people
+USING(playerid)
+INNER JOIN salaries
+USING(playerid, yearid, teamid)
+WHERE yearid = 2016
+GROUP BY full_name, yearid
+HAVING SUM(gs) >= 10
+ORDER BY dollars_per_strikeout DESC;
 
 
 -- 8. Find all players who have had at least 3000 career hits. Report those players' names, total number of hits, and the year they were inducted into the hall of fame (If they were not inducted into the hall of fame, put a null in that column.) Note that a player being inducted into the hall of fame is indicated by a 'Y' in the **inducted** column of the halloffame table.
