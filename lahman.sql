@@ -34,39 +34,13 @@ ORDER BY putouts DESC;
 
 
 -- 3. Find the average number of strikeouts per game by decade since 1920. Round the numbers you report to 2 decimal places. Do the same for home runs per game. Do you see any trends? (Hint: For this question, you might find it helpful to look at the **generate_series** function (https://www.postgresql.org/docs/9.1/functions-srf.html). If you want to see an example of this in action, check out this DataCamp video: https://campus.datacamp.com/courses/exploratory-data-analysis-in-sql/summarizing-and-aggregating-numeric-data?ex=6)
-WITH bins AS (
-	SELECT 
-		generate_series(1920, 2010, 10) AS lower,
-		generate_series(1929, 2019, 10) AS upper )
 SELECT 
-	lower AS decade,
+	yearid - MOD(yearid, 10) AS decade,
 	ROUND(SUM(so) * 2.0 / SUM(g), 2) AS strikeouts_per_game,
 	ROUND(SUM(hr) * 2.0 / SUM(g), 2) AS homeruns_per_game
-FROM bins
-LEFT JOIN teams
-	ON yearid >= lower
-	AND yearid < upper
-GROUP BY lower, upper
-ORDER BY lower DESC;
-
-
-WITH so_hr_decades AS (
-	SELECT 
-		yearid,
-		teamid,
-		g,
-		FLOOR(yearid/10)*10 AS decade,
-		so,
-		hr
-	FROM teams
-)
-SELECT
-	decade,
-	ROUND(SUM(so)*2.0/(SUM(g)), 2) AS so_per_game,
-	ROUND(SUM(hr)*2.0/(SUM(g)), 2) AS hr_per_game
-FROM so_hr_decades
+FROM teams
 GROUP BY decade
-ORDER BY decade;
+ORDER BY decade DESC;
 
 
 -- 4. Find the player who had the most success stealing bases in 2016, where __success__ is measured as the percentage of stolen base attempts which are successful. (A stolen base attempt results either in a stolen base or being caught stealing.) Consider only players who attempted _at least_ 20 stolen bases. Report the players' names, number of stolen bases, number of attempts, and stolen base percentage.
@@ -107,8 +81,8 @@ ORDER BY w;
 
 
 SELECT 
-	SUM(CASE WHEN wswin = 'Y' THEN 1 END) AS ws_wins,
-	ROUND(SUM(CASE WHEN wswin = 'Y' THEN 1 END)::numeric / COUNT(*), 3) AS ws_win_pct
+	SUM(CASE WHEN wswin = 'Y' THEN 1 END) AS world_series_wins,
+	ROUND(SUM(CASE WHEN wswin = 'Y' THEN 1 END)::numeric / COUNT(*), 3) AS world_series_win_pct
 FROM teams
 INNER JOIN (
 	SELECT yearid, MAX(w) AS w
@@ -142,7 +116,6 @@ USING(playerid, yearid, lgid);
 
 -- 7. Which pitcher was the least efficient in 2016 in terms of salary / strikeouts? Only consider pitchers who started at least 10 games (across all teams). Note that pitchers often play for more than one team in a season, so be sure that you are counting all stats for each player.
 SELECT
-	playerid,
 	namefirst || ' ' || namelast AS full_name,
 	SUM(salary)::numeric::money AS salary,
 	SUM(so) AS strikeouts,
@@ -153,41 +126,10 @@ USING(playerid, yearid, teamid)
 INNER JOIN people
 USING(playerid) 
 WHERE yearid = 2016
-GROUP BY full_name, playerid
+GROUP BY full_name
 HAVING SUM(gs) >= 10 
 	AND SUM(salary) IS NOT NULL
 ORDER BY dollars_per_strikeout DESC;
-
-
-WITH salary AS (
-	SELECT
-		playerid,
-		SUM(salary) AS salary
-	FROM salaries
-	WHERE yearid = 2016
-	GROUP BY 1
-),
-strikeouts AS (
-	SELECT
-		playerid,
-		SUM(so) AS strikeouts,
-		SUM(gs) AS games_started
-	FROM pitching
-	WHERE yearid = 2016
-	GROUP BY 1
-)
-SELECT
-	p.playerid,
-	p.namefirst || ' ' || p.namelast AS full_name,
-	s.salary,
-	so.strikeouts,
-	ROUND((s.salary / so.strikeouts)::numeric, 2)::money AS salary_per_strikeout
-FROM people p
-JOIN salary s ON p.playerid = s.playerid
-JOIN strikeouts so ON s.playerid = so.playerid
-WHERE so.games_started >= 10
-GROUP BY 1,2,3,4
-ORDER BY 5 DESC
 
 
 -- 8. Find all players who have had at least 3000 career hits. Report those players' names, total number of hits, and the year they were inducted into the hall of fame (If they were not inducted into the hall of fame, put a null in that column.) Note that a player being inducted into the hall of fame is indicated by a 'Y' in the **inducted** column of the halloffame table.
@@ -201,10 +143,7 @@ USING(playerid)
 LEFT JOIN (
 	SELECT
 		playerid,
-		CASE 
-			WHEN inducted = 'Y' THEN yearid
-			ELSE NULL
-		END AS inducted
+		yearid AS inducted
 	FROM halloffame
 	WHERE inducted = 'Y' ) AS hall_of_fame
 USING(playerid)
@@ -233,7 +172,36 @@ HAVING COUNT(DISTINCT teamid) > 1;
 
 
 -- 10. Find all players who hit their career highest number of home runs in 2016. Consider only players who have played in the league for at least 10 years, and who hit at least one home run in 2016. Report the players' first and last names and the number of home runs they hit in 2016.
-
+	SELECT 
+		namefirst || ' ' || namelast AS full_name,
+		hr AS homeruns
+	FROM batting
+	INNER JOIN (
+		SELECT 
+			playerid, 
+			MAX(hr) AS hr
+		FROM batting
+		GROUP BY playerid
+		HAVING COUNT(DISTINCT yearid) >= 10
+		ORDER BY hr DESC ) AS most_hrs
+	USING(playerid, hr)
+	INNER JOIN people
+	USING(playerid)
+	WHERE playerid IN (
+		SELECT 
+			playerid
+		FROM batting
+		WHERE yearid = 2016 
+			AND hr >= 1 )
+INTERSECT
+	SELECT 
+		namefirst || ' ' || namelast AS full_name,
+		hr AS homeruns
+	FROM batting
+	INNER JOIN people
+	USING(playerid)
+	WHERE yearid = 2016
+ORDER BY homeruns DESC;
 
 
 -- After finishing the above questions, here are some open-ended questions to consider.
@@ -241,19 +209,180 @@ HAVING COUNT(DISTINCT teamid) > 1;
 -- **Open-ended questions**
 
 -- 11. Is there any correlation between number of wins and team salary? Use data from 2000 and later to answer this question. As you do this analysis, keep in mind that salaries across the whole league tend to increase together, so you may want to look on a year-by-year basis.
-
+SELECT 
+	yearid,
+	ROUND(corr(w, team_salary)::numeric, 3) AS wins_salary_corr
+FROM (
+	SELECT
+		yearid, 
+		teamid, 
+		w, 
+		SUM(salary) AS team_salary
+	FROM teams
+	INNER JOIN salaries
+	USING(yearid, teamid)
+	WHERE yearid >= 2000
+	GROUP BY yearid, teamid, w
+	ORDER BY team_salary DESC ) AS wins_salary
+GROUP BY yearid
+ORDER BY yearid DESC;
 
 
 -- 12. In this question, you will explore the connection between number of wins and attendance.
 
 --     a. Does there appear to be any correlation between attendance at home games and number of wins?
-
+SELECT 
+	yearid,
+	ROUND(corr(w, attendance)::numeric, 3) AS wins_attendance_corr
+FROM (
+	SELECT yearid, teamid, w, SUM(homegames.attendance) AS attendance
+	FROM homegames
+	INNER JOIN teams
+	ON homegames.year = teams.yearid
+		AND homegames.team = teams.teamid 
+	WHERE year >= 2000
+	GROUP BY yearid, teamid, w ) AS wins_attendance
+GROUP BY yearid
+ORDER BY yearid DESC;
 
 
 --     b. Do teams that win the world series see a boost in attendance the following year? What about teams that made the playoffs? Making the playoffs means either being a division winner or a wild card winner.
+SELECT 
+	teams.yearid,
+	teams.teamid,
+	world_series_year,
+	following_year,
+	ROUND((following_year - world_series_year) * 100.0 / world_series_year, 2) AS percent_change
+FROM teams
+INNER JOIN (
+	SELECT
+		year AS yearid,
+		team AS teamid,
+		SUM(attendance) AS world_series_year
+	FROM homegames 
+	GROUP BY yearid, teamid ) AS world_series_year
+USING(yearid, teamid)
+INNER JOIN (
+	SELECT
+		year AS yearid,
+		team AS teamid,
+		SUM(attendance) AS following_year
+	FROM homegames 
+	GROUP BY yearid, teamid ) AS following_year
+ON teams.yearid + 1 = following_year.yearid
+	AND teams.teamid = following_year.teamid
+WHERE teams.yearid >= 2000 
+	AND wswin = 'Y'
+ORDER BY teams.yearid DESC;
 
+
+SELECT 
+	teams.yearid,
+	teams.teamid,
+	playoff_year,
+	following_year,
+	ROUND((following_year - playoff_year) * 100.0 / playoff_year, 2) AS percent_change
+FROM teams
+INNER JOIN (
+	SELECT
+		year AS yearid,
+		team AS teamid,
+		SUM(attendance) AS playoff_year
+	FROM homegames 
+	GROUP BY yearid, teamid ) AS playoff_year
+USING(yearid, teamid)
+INNER JOIN (
+	SELECT
+		year AS yearid,
+		team AS teamid,
+		SUM(attendance) AS following_year
+	FROM homegames 
+	GROUP BY yearid, teamid ) AS following_year
+ON teams.yearid + 1 = following_year.yearid
+	AND teams.teamid = following_year.teamid
+WHERE teams.yearid >= 2000 
+	AND (divwin = 'Y' OR wcwin = 'Y')
+ORDER BY teams.yearid DESC;
 
 
 -- 13. It is thought that since left-handed pitchers are more rare, causing batters to face them less often, that they are more effective. Investigate this claim and present evidence to either support or dispute this claim. First, determine just how rare left-handed pitchers are compared with right-handed pitchers. Are left-handed pitchers more likely to win the Cy Young Award? Are they more likely to make it into the hall of fame?
-
+SELECT
+	decade,
+	left_handed_pct,
+	cy_young_pct
+FROM (
+	SELECT
+		'total' AS decade,
+		ROUND(SUM(left_handed) * 100.0 / COUNT(*), 2) AS left_handed_pct
+	FROM (
+		SELECT
+			playerid,
+			CASE
+				WHEN throws = 'L' THEN 1 
+				ELSE 0
+			END AS left_handed
+		FROM pitching
+		INNER JOIN people
+		USING(playerid)
+		GROUP BY playerid, left_handed ) AS pitching
+UNION
+	SELECT
+		decade::text,
+		ROUND(SUM(left_handed) * 100.0 / COUNT(*), 2) AS left_handed_pct
+	FROM (
+		SELECT
+			yearid - MOD(yearid, 10) AS decade,
+			playerid,
+			CASE
+				WHEN throws = 'L' THEN 1 
+				ELSE 0
+			END AS left_handed
+		FROM pitching
+		INNER JOIN people
+		USING(playerid)
+		GROUP BY decade, playerid, left_handed ) AS pitching
+	GROUP BY decade
+	ORDER BY decade DESC ) AS left_handed_pct
+FULL JOIN (
+	SELECT
+		'total' AS decade,
+		ROUND(SUM(left_handed) * 100.0 / COUNT(*), 2) AS cy_young_pct
+	FROM (
+		SELECT
+			playerid,
+			CASE
+				WHEN throws = 'L' THEN 1 
+				ELSE 0
+			END AS left_handed
+		FROM pitching
+		INNER JOIN people
+		USING(playerid)
+		WHERE playerid IN (
+			SELECT DISTINCT playerid
+			FROM awardsplayers
+			WHERE awardid = 'Cy Young Award')
+		GROUP BY playerid, left_handed ) AS pitching
+UNION
+	SELECT
+		decade::text,
+		ROUND(SUM(left_handed) * 100.0 / COUNT(*), 2) AS cy_young_pct
+	FROM (
+		SELECT
+			yearid - MOD(yearid, 10) AS decade,
+			playerid,
+			CASE
+				WHEN throws = 'L' THEN 1 
+				ELSE 0
+			END AS left_handed
+		FROM pitching
+		INNER JOIN people
+		USING(playerid)
+		WHERE playerid IN (
+			SELECT DISTINCT playerid
+			FROM awardsplayers
+			WHERE awardid = 'Cy Young Award')
+		GROUP BY decade, playerid, left_handed ) AS pitching
+	GROUP BY decade
+	ORDER BY decade DESC ) AS cy_young_pct
+USING(decade)
 
